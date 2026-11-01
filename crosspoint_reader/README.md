@@ -45,6 +45,15 @@ enabled (Preferences > Plugins > device config >
   page-list navs are dropped; and base64 `data:` URI images are extracted into
   real (optimized) image files. Every text transformation verifies that the
   visible text is byte-identical and reverts itself on any mismatch or error.
+- List indentation is normalized (optional, "Tighten list indents" checkbox, off
+  by default): every `<ul>`/`<ol>` gets `margin-left:1em;padding-left:0` and every
+  `<li>` gets `margin-left:0;padding-left:0`, replacing any left margin/padding
+  the book set there. Many publisher stylesheets indent lists by 2-3em per
+  level, which on a 480px screen leaves a narrow column of text. The fix is an
+  inline `style` attribute because a stylesheet rule can't reliably win on the
+  device: the firmware cascades element < class < element.class < inline style
+  and ignores `!important`. Other list styling (text-indent, vertical margins,
+  list-style) is kept.
 
 The target screen size comes from the device profile — **X4 = 480×800**,
 **X3 = 528×792** — which is auto-detected from the device's `/api/status`

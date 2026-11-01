@@ -612,6 +612,7 @@ class CrossPointDevice(DeviceConfig, DevicePlugin):
             grayscale=PREFS['optimize_grayscale'],
             auto_crop=PREFS['optimize_auto_crop'],
             split_text=PREFS['optimize_split'],
+            tighten_lists=PREFS['optimize_tighten_lists'],
         )
 
         def _step(tag, message):

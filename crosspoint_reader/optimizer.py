@@ -57,6 +57,9 @@ RENAME_RE = re.compile(r'\.(png|gif|webp|bmp|jpeg)$', re.IGNORECASE)
 REF_RE = re.compile(r'\.(?:png|gif|webp|bmp|jpeg)(?=["\'\)\s#?>])', re.IGNORECASE)
 XHTML_RE = re.compile(r'\.(xhtml|html|htm)$', re.IGNORECASE)
 
+# Indent for each list level when "tighten list indents" is on.
+DEFAULT_LIST_INDENT_EM = 1.0
+
 DEFENSIVE_STYLE = (
     '<style type="text/css">img,svg{max-width:100%;height:auto}'
     'body{overflow-wrap:break-word}table{max-width:100%;table-layout:fixed}'
@@ -80,13 +83,17 @@ def resolve_profile(device_target, detected_device):
 
 class Options(object):
     def __init__(self, quality=DEFAULT_JPEG_QUALITY, grayscale=True, auto_crop=False,
-                 split_text=True):
+                 split_text=True, tighten_lists=False, list_indent_em=DEFAULT_LIST_INDENT_EM):
         self.quality = int(quality)
         self.grayscale = bool(grayscale)
         self.auto_crop = bool(auto_crop)
         # Split oversized paragraphs/chapters and strip fonts for the
         # low-RAM firmware layout engine (see textsplit.py).
         self.split_text = bool(split_text)
+        # Replace the book's own list indentation with a small fixed one
+        # (see _tighten_list_element).
+        self.tighten_lists = bool(tighten_lists)
+        self.list_indent_em = float(list_indent_em)
 
 
 # ---------------------------------------------------------------------------
@@ -324,6 +331,50 @@ def _is_problem_img_decl(prop, value):
     return prop in ('width', 'height')
 
 
+# ---------------------------------------------------------------------------
+# List indentation
+# ---------------------------------------------------------------------------
+#
+# Many publisher stylesheets indent lists by 2-3em per level (often via a class
+# on <ul>/<li>), which leaves only a narrow column of text on a 480px screen.
+# A stylesheet rule can't reliably override that on the device: the firmware
+# cascades element < class < element.class < inline style, ignores
+# !important, and reads only stylesheets listed in the OPF manifest. An inline
+# style attribute on the list elements themselves wins over all of those, so
+# that is what this sets.
+
+_LIST_INDENT_PROPS = frozenset((
+    'margin-left', 'padding-left', 'margin-inline-start', 'padding-inline-start',
+))
+_LIST_TAGS = ('ul', 'ol', 'li')
+
+
+def _is_list_indent_decl(prop, value):
+    return prop in _LIST_INDENT_PROPS
+
+
+def _list_indent_style(tag, indent_em):
+    # Lists carry the indent; items sit flush inside them, so nested lists
+    # step in by indent_em per level.
+    if tag in ('ul', 'ol'):
+        return 'margin-left:%gem;padding-left:0' % indent_em
+    return 'margin-left:0;padding-left:0'
+
+
+def _tighten_list_element(el, indent_em):
+    tag = el.tag.rsplit('}', 1)[-1].lower() if isinstance(el.tag, str) else ''
+    if tag not in _LIST_TAGS:
+        return False
+    style, _ = _filter_style_declarations(el.get('style') or '', _is_list_indent_decl)
+    style = style.strip().rstrip(';').strip()
+    wanted = _list_indent_style(tag, indent_em)
+    new_style = (style + ';' + wanted) if style else wanted
+    if el.get('style') == new_style:
+        return False
+    el.set('style', new_style)
+    return True
+
+
 def _fix_img_style_attr(style):
     return _filter_style_declarations(style, _is_problem_img_decl)
 
@@ -366,8 +417,12 @@ def _fix_img_element(img):
     return modified
 
 
-def _fix_xhtml(text, log):
-    """Normalize image sizing, unwrap SVG covers/images, rename refs, inject CSS."""
+def _fix_xhtml(text, log, opts=None):
+    """Normalize image sizing, unwrap SVG covers/images, rename refs, inject CSS.
+
+    With opts.tighten_lists, also replace list indentation (see
+    _tighten_list_element).
+    """
     fixes = 0
     # SVG cover / SVG-wrapped images: unwrap to a plain <img>.
     new_text, n = _unwrap_svg_images(text)
@@ -387,6 +442,16 @@ def _fix_xhtml(text, log):
             # also catch namespace-less <img> (malformed docs)
             for img in root.iter('img'):
                 modified |= _fix_img_element(img)
+            if opts is not None and opts.tighten_lists:
+                lists = 0
+                for tag in _LIST_TAGS:
+                    for el in list(root.iter('{http://www.w3.org/1999/xhtml}' + tag)) + list(root.iter(tag)):
+                        if _tighten_list_element(el, opts.list_indent_em):
+                            lists += 1
+                if lists:
+                    modified = True
+                    fixes += lists
+                    log('FIX', 'List indents (%d elements)' % lists)
             if modified:
                 # tostring() writes out the element tree alone, so the DOCTYPE
                 # has to be handed back or the rewrite drops it — and a
@@ -637,7 +702,7 @@ def optimize_epub(in_path, out_path, profile, opts, log_fn=None):
                         zout.writestr(n, data, compress_type=zipfile.ZIP_STORED)
                 elif XHTML_RE.search(low):
                     text = _decode_text(data)
-                    text, fixes = _fix_xhtml(text, log)
+                    text, fixes = _fix_xhtml(text, log, opts)
                     summary['fixes'] += fixes
                     zout.writestr(n, text.encode('utf-8'),
                                   compress_type=zipfile.ZIP_DEFLATED)
