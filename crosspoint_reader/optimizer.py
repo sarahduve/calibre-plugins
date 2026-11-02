@@ -346,6 +346,11 @@ def _is_problem_img_decl(prop, value):
 _LIST_INDENT_PROPS = frozenset((
     'margin-left', 'padding-left', 'margin-inline-start', 'padding-inline-start',
 ))
+# Items also drop text-indent. Publishers often build hanging indents (common
+# in tables of contents) from a negative text-indent plus a matching left
+# margin; zeroing the margin alone would pull the first line off the left
+# edge of the screen.
+_LIST_ITEM_INDENT_PROPS = _LIST_INDENT_PROPS | frozenset(('text-indent',))
 _LIST_TAGS = ('ul', 'ol', 'li')
 
 
@@ -353,19 +358,24 @@ def _is_list_indent_decl(prop, value):
     return prop in _LIST_INDENT_PROPS
 
 
+def _is_list_item_indent_decl(prop, value):
+    return prop in _LIST_ITEM_INDENT_PROPS
+
+
 def _list_indent_style(tag, indent_em):
     # Lists carry the indent; items sit flush inside them, so nested lists
     # step in by indent_em per level.
     if tag in ('ul', 'ol'):
         return 'margin-left:%gem;padding-left:0' % indent_em
-    return 'margin-left:0;padding-left:0'
+    return 'margin-left:0;padding-left:0;text-indent:0'
 
 
 def _tighten_list_element(el, indent_em):
     tag = el.tag.rsplit('}', 1)[-1].lower() if isinstance(el.tag, str) else ''
     if tag not in _LIST_TAGS:
         return False
-    style, _ = _filter_style_declarations(el.get('style') or '', _is_list_indent_decl)
+    predicate = _is_list_item_indent_decl if tag == 'li' else _is_list_indent_decl
+    style, _ = _filter_style_declarations(el.get('style') or '', predicate)
     style = style.strip().rstrip(';').strip()
     wanted = _list_indent_style(tag, indent_em)
     new_style = (style + ';' + wanted) if style else wanted
